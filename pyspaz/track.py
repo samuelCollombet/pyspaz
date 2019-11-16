@@ -5,9 +5,6 @@ track.py
 # Numerical essentials
 import numpy as np 
 
-# Get the list of files with a given extension
-import glob 
-
 # File reading / saving
 import pandas as pd 
 import os 
@@ -17,6 +14,7 @@ import sys
 from scipy import io as sio
 
 # For getting a list of input files
+import glob
 from glob import glob
 
 # Hungarian algorithm

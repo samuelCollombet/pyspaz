@@ -5,3 +5,5 @@
 To install `pyspaz`, do
 
 `python setup.py install`
+
+`pyspaz` requires the `nd2reader`, `tifffile`, and `munkres` packages. For an example of how to run a basic localization and tracking analysis, see the `examples/localization_and_tracking.ipynb` notebook.

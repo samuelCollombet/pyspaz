@@ -45,18 +45,27 @@ def loc_density(
     out_png = 'default_loc_density_out.png',
 ): 
     # Get the list of localized positions
-    m_keys = metadata.keys()
+    m_keys = list(metadata.keys())
     positions = np.asarray(locs[[y_col, x_col]])
     if convert_to_um and ('pixel_size_um' in m_keys):
         positions = positions * metadata['pixel_size_um']
 
     # Make the size of the out frame
     if ('N' in m_keys) and ('M' in m_keys):
-        n_up = int(metadata['N']) * upsampling_factor
-        m_up = int(metadata['M']) * upsampling_factor
+        if convert_to_um:
+            n_up = int(metadata['N'] * metadata['pixel_size_um']) * upsampling_factor
+            m_up = int(metadata['M'] * metadata['pixel_size_um']) * upsampling_factor
+        else:
+            n_up = int(metadata['N']) * upsampling_factor
+            m_up = int(metadata['M']) * upsampling_factor
     else:
-        n_up = int(positions[:,0].max()) * upsampling_factor
-        m_up = int(positions[:,1].max()) * upsampling_factor 
+        if convert_to_um:
+            n_up = int(positions[:,0].max() * metadata['pixel_size_um']) * upsampling_factor
+            m_up = int(positions[:,1].max() * metadata['pixel_size_um']) * upsampling_factor
+        else:
+            n_up = int(positions[:,0].max()) * upsampling_factor
+            m_up = int(positions[:,1].max()) * upsampling_factor 
+
     density = np.zeros((n_up, m_up), dtype = 'float64')
 
     # Determine the size of the Gaussian kernel to use for
@@ -200,7 +209,7 @@ def loc_density_from_file(
     spazio.check_file_exists(loc_file)
     if 'Tracked.mat' in loc_file:
         trajs, metadata, traj_cols = spazio.load_trajs(loc_file)
-        
+
     locs, metadata = spazio.load_locs(loc_file)
     density = loc_density(
         locs,

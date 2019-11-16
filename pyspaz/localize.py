@@ -125,6 +125,7 @@ def detect_and_localize_file(
     file_name,
     sigma = 1.0,
     out_txt = None,
+    out_dir = None,
     window_size = 9,
     detect_threshold = 20.0,
     damp = 0.2,
@@ -149,6 +150,9 @@ def detect_and_localize_file(
         sigma: float, the expected standard deviation of the Gaussian spot
 
         out_txt: str, the name of a file to save the localizations, if desired
+
+        out_dir: str, location to put output files. If None, these are placed
+            in the same directory as the ND2 files
         
         window_size: int, the width of the window to use for spot detection
             and localization
@@ -348,6 +352,12 @@ def detect_and_localize_file(
                     erf((max_x_idx - 0.5 - init_pars[1]) / sqrt_sig2_2))
             init_pars[2] = init_pars[2] / (E_y_max * E_x_max)
 
+            # If the I0 guess looks crazy (usually because there's a bright pixel
+            # on the edge), make a more conservative guess by integrating the
+            # inner ring of pixels
+            if (np.abs(init_pars[2]) > 1000) or (init_pars[2] < 0.0):
+                init_pars[2] = psf_image[half_w-1:half_w+2, half_w-1:half_w+2].sum()
+
             # Set the current parameter set to the initial guess. Hold onto the
             # initial guess so that if MLE diverges, we have a fall-back.
             pars[:] = init_pars.copy()
@@ -448,8 +458,11 @@ def detect_and_localize_file(
                 iter_idx += 1
 
             # If the estimate is diverging, fall back to the initial guess.
-            if any(np.abs(update[:2]) >= divergence_crit):
-                pars = init_pars 
+            if any(np.abs(update[:2]) >= divergence_crit) or \
+                ~check_pos_inside_window(pars[:2], window_size, edge_tolerance = 2) or \
+                (pars[2] > 1000):
+                pars = init_pars
+
             else:
                 # Correct for the half-pixel indexing error that results from
                 # implicitly assigning intensity values to the corners of pixels
@@ -477,10 +490,10 @@ def detect_and_localize_file(
     df_locs = pd.DataFrame(locs, columns = [
         'detect_y_pixels',
         'detect_x_pixels',
-        'mle_y_pixels',
-        'mle_x_pixels',
-        'mle_I0',
-        'mle_bg',
+        'y_pixels',
+        'x_pixels',
+        'I0',
+        'bg',
         'error',
         'subwindow_variance',
         'frame_idx',
@@ -491,14 +504,67 @@ def detect_and_localize_file(
     df_locs['error'] = df_locs['error'].astype('bool')
     df_locs['frame_idx'] = df_locs['frame_idx'].astype('uint16')
 
+    # Save metadata associated with this file
+    metadata = {
+        'N' : N,
+        'M' : M,
+        'n_frames' : n_frames,
+        'window_size' : window_size,
+        'localization_method' : 'mle_gaussian',
+        'sigma' : sigma,
+        'camera_bg' : camera_bg,
+        'camera_gain' : camera_gain,
+        'max_iter' : max_iter,
+        'initial_guess' : initial_guess,
+        'convergence_crit' : convergence_crit,
+        'divergence_crit' : divergence_crit,
+        'enforce_negative_definite' : enforce_negative_definite,
+        'damp' : damp,
+        'detect_threshold' : detect_threshold,
+        'file_type' : '.nd2',
+        'image_file' : file_name,
+    }
+
     # If desired, save to a file
     if out_txt != None:
-        df_locs.to_csv(out_txt, sep = '\t', index = False)
+        if out_dir != None:
+            if not os.path.isdir(out_dir):
+                os.mkdir(out_dir)
+            out_txt = "%s/%s" % (out_dir, out_txt)
+        spazio.save_locs(out_txt, df_locs, metadata)
 
     return df_locs
 
-def detect_and_localize_nd2_directory(
+def detect_and_localize_file_parallelized(
+    file_name,
+    n_workers = 8,
+    n_threads = 8,
+    sigma = 1.0,
+    out_txt = None,
+    out_dir = None,
+    window_size = 9,
+    detect_threshold = 20.0,
+    damp = 0.2,
+    camera_bg = 0,
+    camera_gain = 1,
+    max_iter = 10,
+    plot = False,
+    initial_guess = 'radial_symmetry',
+    convergence_crit = 3.0e-3,
+    divergence_crit = 1.0,
+    max_locs = 1000000,
+    enforce_negative_definite = False,
+    verbose = True,
+):
+    raise NotImplementedError 
+
+def check_pos_inside_window(pos_vector, window_size, edge_tolerance = 2):
+    return ~((pos_vector < edge_tolerance).any() or \
+        (pos_vector > window_size-edge_tolerance).any())
+
+def detect_and_localize_directory(
     directory_name,
+    out_dir = None,
     sigma = 1.0,
     window_size = 9,
     detect_threshold = 20.0,
@@ -513,14 +579,72 @@ def detect_and_localize_nd2_directory(
     enforce_negative_definite = False,
     verbose = False,
 ):
+    '''
+    Detect and localize Gaussian spots in every ND2 file found
+    in the directory *directory_name*.
+    
+    args
+        directory_name: str
+        
+        out_dir: str, location to put output files. If None, these are placed
+            in the same directory as the ND2 files
+
+        sigma: float, the expected standard deviation of the Gaussian spot
+        
+        window_size: int, the width of the window to use for spot detection
+            and localization
+        
+        detect_threshold: float, the threshold in the log-likelihood image to 
+            use when calling a spot
+        
+        damp: float, the factor by which to damp the update vector at each iteration
+        
+        camera_bg: float, the background level on the camera
+        
+        camera_gain: float, the grayvalues/photon conversion for the camera
+        
+        max_iter: int, the maximum number of iterations to execute before escaping
+        
+        plot: bool, show each step of the result for illustration
+        
+        initial_guess: str, the method to use for the initial guess. The currently
+            implemented options are `radial_symmetry`, `centroid`, and `window_center`
+        
+        convergence: float, the criterion on the update vector for y and x when
+            the algorithm can stop iterating
+            
+        divergence_crit: float, the criterion on the update vector for y and x
+            when the algorithm should abandon MLE and default to a simpler method
+            
+        max_locs: int, the size of the localizations array to instantiate. This should
+            be much greater than the number of expected localizations in the movie
+
+        enforce_negative_definite : bool, whether to force the Hessian to be 
+            negative definite by iteratively testing for negative definiteness
+            by LU factorization, then subtracting successively larger ridge terms.
+            If False, the method will only add ridge terms if numpy throws a
+            linalg.linAlgError when trying to the invert the Hessian.
+
+        verbose : bool, show the user the current progress
+
+    '''
     file_list = glob("%s/*.nd2" % directory_name)
-    out_txt_list = [fname.replace('.nd2', '_mle_locs.txt') for fname in file_list]
+
+    # Construct the output locations
+    if out_dir == None:
+        out_txt_list = [fname.replace('.nd2', '.locs') for fname in file_list]
+    else:
+        if not os.path.isdir(out_dir):
+            os.mkdir(out_dir)
+        out_txt_list = ['%s/%s' % (out_dir, fname.split('/')[-1].replace('.nd2', '.locs')) for fname in file_list]
+
     for f_idx, fname in enumerate(file_list):
         if verbose: print('Localizing %s...' % fname)
         out_df = detect_and_localize_file(
             fname,
-            sigma,
+            sigma = sigma,
             out_txt = out_txt_list[f_idx],
+            out_dir = None,
             window_size = window_size,
             detect_threshold = detect_threshold,
             damp = damp,

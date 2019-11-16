@@ -5,6 +5,9 @@ track.py
 # Numerical essentials
 import numpy as np 
 
+# Get the list of files with a given extension
+import glob 
+
 # File reading / saving
 import pandas as pd 
 import os 
@@ -27,13 +30,77 @@ from time import time
 
 # Various utilities
 from . import utils
+from . import spazio 
+
+# Progress bar
+from tqdm import tqdm 
+
+def track_locs_directory(
+    directory_name,
+    out_dir = None,
+    d_max = 20.0,
+    d_bound_naive = 0.1,
+    out_mat_file = None,
+    search_exp_fac = 3,
+    sep = '\t',
+    pixel_size_um = 0.16,
+    frame_interval_sec = 0.00548,
+    min_int = 0.0,
+    max_blinks = 0,
+    window_size = 9,
+    k_return_from_blink = 1.0,
+    y_int = 0.5,
+    y_diff = 0.9,
+    start_frame = None,
+    stop_frame = None,
+    verbose = True,
+):
+    '''
+    Track all of the *.locs files in a given directory.
+
+    If *out_dir* is None, the resulting *Tracked.mat files
+    are placed in the same directory as the localizations.
+
+    '''
+    loc_files = glob("%s/*.locs" % directory_name)
+    if out_dir == None:
+        out_mat_files = [i.replace('.locs', '_Tracked.mat') \
+            for i in loc_files]
+    else:
+        if not os.path.isdir(out_dir):
+            os.mkdir(out_dir)
+        out_mat_files = ['%s/%s' % (out_dir, \
+            i.split('/')[-1].replace('.locs', '_Tracked.mat')) \
+            for i in loc_files]
+
+    for f_idx, fname in enumerate(loc_files):
+        track_locs(
+            fname,
+            out_mat_file = out_mat_files[f_idx],
+            d_max = d_max,
+            d_bound_naive = d_bound_naive,
+            search_exp_fac = search_exp_fac,
+            sep = sep,
+            pixel_size_um = pixel_size_um,
+            frame_interval_sec = frame_interval_sec,
+            min_int = min_int,
+            max_blinks = max_blinks,
+            window_size = window_size,
+            k_return_from_blink = k_return_from_blink,
+            y_int = y_int,
+            y_diff = y_diff,
+            start_frame = start_frame,
+            stop_frame = stop_frame,
+            verbose = verbose,
+        )
+            
 
 def track_locs(
-    localization_csv,
-    d_max,
-    d_bound_naive,
+    loc_file,
     out_mat_file = None,
-    search_exp_fac = 1,
+    d_max = 20.0,
+    d_bound_naive = 0.1,
+    search_exp_fac = 3,
     sep = '\t',
     pixel_size_um = 0.16,
     frame_interval_sec = 0.00548,
@@ -66,8 +133,8 @@ def track_locs(
 
     # Read the localization csv and make sure we have all of the 
     # right columns
-    locs = pd.read_csv(localization_csv, sep = sep)
-    columns = ['frame_idx', 'mle_y_pixels', 'mle_x_pixels', 'mle_I0', 'mle_bg', 'llr_detection']
+    locs, metadata = spazio.load_locs(loc_file)
+    columns = ['frame_idx', 'y_pixels', 'x_pixels', 'I0', 'bg', 'llr_detection']
     if not all([c in locs.columns for c in columns]):
         raise RuntimeError("Localization CSV must contains columns %s" % ', '.join(columns))
 
@@ -114,7 +181,7 @@ def track_locs(
 
     # Iterate through the rest of the frames, saving trajectories
     # as we go.
-    for frame_idx in range(1, n_frames + 1):
+    for frame_idx in tqdm(range(1, n_frames + 1)):
 
         # Get all localizations in this frame
         frame_locs = locs[locs[:,0] == frame_idx, :]
@@ -254,14 +321,38 @@ def track_locs(
 
     # Save to file, if desired
     if out_mat_file != None:
-        save_trajectories_to_mat(
-            completed_trajectories,
+
+        # Add tracking parameters to metadata
+        for k in metadata.keys():
+            if metadata[k] == None:
+                metadata[k] = 'None'
+
+        metadata['locs_used_for_tracking'] = loc_file
+        metadata['d_max'] = d_max
+        metadata['d_bound_naive'] = d_bound_naive
+        metadata['search_exp_fac'] = search_exp_fac
+        metadata['frame_interval_sec'] = frame_interval_sec
+        metadata['pixel_size_um'] = pixel_size_um
+        metadata['min_int'] = min_int
+        metadata['max_blinks'] = max_blinks
+        metadata['k_return_from_blink'] = k_return_from_blink
+        metadata['y_int'] = y_int
+        metadata['y_diff'] = y_diff 
+        metadata['tracking_start_frame'] = str(start_frame)
+        metadata['tracking_stop_frame'] = str(stop_frame)
+
+        # Save to file
+        spazio.save_trajectory_obj_to_mat(
             out_mat_file,
+            completed_trajectories,
+            metadata,
             frame_interval_sec,
             pixel_size_um = pixel_size_um,
+            convert_pixel_to_um = True,
         )
 
-    return completed_trajectories
+    # Return (trajs, metadata, traj_cols)
+    return spazio.load_trajs(out_mat_file)
 
 def assign(
     trajectories,

@@ -32,30 +32,59 @@ def wrapup(out_png, dpi = 400, open_result = True):
 
 def loc_density(
     locs,
+    metadata = {},
     ax = None,
     upsampling_factor = 20,
+    kernel_width = 0.5,
     verbose = False,
+    y_col = 'y_pixels',
+    x_col = 'x_pixels',
+    convert_to_um = True,
+    vmax_mod = 1.0,
+    cmap = 'gray',
+    out_png = 'default_loc_density_out.png',
 ): 
-    kernel_size = 2 * int(upsampling_factor * 0.2) + 1
-    middle = kernel_size//2
-    radius = kernel_size/3
-    r2 = radius**2
+    # Get the list of localized positions
+    m_keys = metadata.keys()
+    positions = np.asarray(locs[[y_col, x_col]])
+    if convert_to_um and ('pixel_size_um' in m_keys):
+        positions = positions * metadata['pixel_size_um']
 
-    kernel_y, kernel_x = np.mgrid[:kernel_size, :kernel_size]
-    kernel = np.exp(-((kernel_x-middle)**2 + (kernel_y-middle)**2) / (2*r2))
+    # Make the size of the out frame
+    if ('N' in m_keys) and ('M' in m_keys):
+        n_up = int(metadata['N']) * upsampling_factor
+        m_up = int(metadata['M']) * upsampling_factor
+    else:
+        n_up = int(positions[:,0].max()) * upsampling_factor
+        m_up = int(positions[:,1].max()) * upsampling_factor 
+    density = np.zeros((n_up, m_up), dtype = 'float64')
 
-    n_locs = sum([trajs[traj_idx][0].shape[0] for traj_idx in range(n_trajs)])
+    # Determine the size of the Gaussian kernel to use for
+    # KDE
+    sigma = kernel_width * upsampling_factor
+    w = int(6 * sigma)
+    if w % 2 == 0: w+=1
+    half_w = w // 2
+    r2 = sigma ** 2
+    kernel_y, kernel_x = np.mgrid[:w, :w]
+    kernel = np.exp(-((kernel_x-half_w)**2 + (kernel_y-half_w)**2) / (2*r2))
 
+    n_locs = len(locs)
     for loc_idx in range(n_locs):
         y = int(round(positions[loc_idx, 0] * upsampling_factor, 0))
         x = int(round(positions[loc_idx, 1] * upsampling_factor, 0))
         try:
+            # Localization is entirely inside the borders
             density[
-                y-middle : y+middle+1,
-                x-middle : x+middle+1,
+                y-half_w : y+half_w+1,
+                x-half_w : x+half_w+1,
             ] += kernel
         except ValueError:
-            continue 
+            # Localization is close to the edge
+            k_y, k_x = np.mgrid[y-half_w:y+half_w+1, x-half_w:x+half_w+1]
+            in_y, in_x = ((k_y>=0) & (k_x>=0) & (k_y<n_up) & (k_x<m_up)).nonzero()
+            density[k_y.flatten()[in_y], k_x.flatten()[in_x]] = \
+                density[k_y.flatten()[in_y], k_x.flatten()[in_x]] + kernel[in_y, in_x]
 
         if verbose:
             sys.stdout.write('Finished compiling the densities of %d/%d localizations...\r' % (loc_idx+1, n_locs))
@@ -64,18 +93,19 @@ def loc_density(
         fig, ax = plt.subplots(figsize = (4, 4))
         ax.imshow(
             density[::-1,:],
-            cmap='gray',
+            cmap=cmap,
             vmax=density.mean() + density.std() * vmax_mod,
         )
         ax.set_xticks([])
         ax.set_yticks([])
-        wrapup()
+        wrapup(out_png)
     else:
         ax.imshow(
             density[::-1,:],
-            cmap='gray',
+            cmap=cmap,
             vmax=density.mean() + density.std() * vmax_mod,
         )
+    return density 
     
 def loc_density_from_trajs(
     trajs,
@@ -87,14 +117,15 @@ def loc_density_from_trajs(
     loc_density(locs, ax=ax, upsampling_factor=upsampling_factor,
         verbose=verbose)
 
-def plot_trajectories(
+def show_trajectories(
     trajs,
     ax = None,
     cmap = 'viridis',
     cap = 3000,
     verbose = True,
     n_colors = 100,
-    color_index = None,
+    color_by = None,
+    upsampling_factor = 1,
 ):
     n_trajs = trajs.shape[0]
     if n_trajs > cap:
@@ -103,8 +134,12 @@ def plot_trajectories(
     else:
         cap = n_trajs 
 
-    if color_index == None:
-        color_index = (np.arange(n_trajs) * 33).astype('uint16')
+    if color_by == None:
+        color_index = (np.arange(n_trajs) * 33).astype('uint16') % n_colors
+    else:
+        color_values = np.array([i[0] for i in trajs[:, color_by]])
+        color_bins = np.arange(n_colors) * color_values.max() / (n_colors-1)
+        color_index = np.digitize(color_values, bins = color_bins)
 
     colors = sns.color_palette(cmap, n_colors)
 
@@ -123,20 +158,63 @@ def plot_trajectories(
             markersize = 2,
             linestyle = '-',
             linewidth = 0.5,
-            color = colors[traj_idx % len(colors)],
+            color = colors[color_index[traj_idx]],
         )
         if verbose:
-            sys.stdout.write('Finished plotting %d/%d trajectories...\r' % (traj_idx + 1, traj_cap))
+            sys.stdout.write('Finished plotting %d/%d trajectories...\r' % (traj_idx + 1, cap))
             sys.stdout.flush()
     ax.set_aspect('equal')
-    return ax
 
 
+#
+# Functions that operate directly on files
+#
+def plot_tracked_mat(
+    tracked_mat_file,
+    out_png,
+    cmap = 'viridis',
+    cap = 3000,
+    verbose = True,
+    n_colors = 100,
+    color_index = None,
+):
+    spazio.check_file_exists(tracked_mat_file)
 
+    trajs, metadata, traj_cols = spazio.load_trajs(tracked_mat_file)
+    kwargs = {'cmap' : cmap, 'cap' : cap, 'verbose' : verbose,
+        'n_colors' : n_colors, 'color_index' : color_index}
+    ax = plot_trajectories(trajs, ax=None, **kwargs)
+    wrapup(out_png)
 
-
-
-
+def loc_density_from_file(
+    loc_file,
+    out_png,
+    upsampling_factor = 20,
+    kernel_width = 0.5,
+    y_col = 'y_pixels',
+    x_col = 'x_pixels',
+    convert_to_um = True,
+    vmax_mod = 1.0,
+    verbose = False,
+): 
+    spazio.check_file_exists(loc_file)
+    if 'Tracked.mat' in loc_file:
+        trajs, metadata, traj_cols = spazio.load_trajs(loc_file)
+        
+    locs, metadata = spazio.load_locs(loc_file)
+    density = loc_density(
+        locs,
+        metadata = metadata,
+        ax = None,
+        upsampling_factor = upsampling_factor,
+        kernel_width = kernel_width,
+        y_col = y_col, 
+        x_col = x_col,
+        convert_to_um = convert_to_um,
+        vmax_mod = vmax_mod,
+        verbose = verbose,
+        out_png = out_png,
+    )
 
 
 

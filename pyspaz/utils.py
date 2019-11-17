@@ -239,4 +239,91 @@ def sq_radial_distance_array(points_0, points_1):
     result = ((array_points_0 - array_points_1)**2).sum(axis = 2)
     return result 
 
+def shoelace(points):
+    '''
+    INPUT
+        points      :   np.array of shape (N_points, 2)
+
+    RETURNS
+        float, the oriented volume of the polygon defined
+            by *points*
+
+    '''
+    result = 0.0
+    for i in range(points.shape[0] - 1):
+        result += (points[i + 1, 0] - points[i, 0]) \
+            * (points[i + 1, 1] + points[i, 1])
+    return result 
+
+def sort_points_into_polygon(
+    points,
+    tolerance_radius = 10
+):
+    all_indices = np.arange(points.shape[0])
+    remaining_pt_idxs = np.ones(points.shape[0], dtype = 'bool')
+    result = np.zeros(points.shape[0], dtype = 'uint16')
+
+    result_idx = 0
+    current_idx = 0
+    result[result_idx] = current_idx 
+    remaining_pt_idxs[current_idx] = False 
+
+    while remaining_pt_idxs.any():
+        distances = np.sqrt(((points[current_idx, :] - \
+            points[remaining_pt_idxs, :])**2).sum(axis = 1))
+
+        within_tolerance = distances <= tolerance_radius
+
+        if ~within_tolerance.any():
+            return points[result[:result_idx], :]
+
+        current_idx = all_indices[remaining_pt_idxs][within_tolerance]\
+            [np.argmin(distances[within_tolerance])]
+
+        result[result_idx] = current_idx 
+        remaining_pt_idxs[current_idx] = False
+        result_idx += 1
+
+    return points[result, :]
+
+def mask_edge(mask):
+    '''
+    Utility function; returns the list of vertices of a binary mask.
+
+    INPUT
+        mask    :   numpy.array, binary image mask
+
+    RETURNS
+    '''
+
+    mask = mask.astype('bool')
+    mask_00 = mask[:-1, :-1]
+    mask_10 = mask[1: , :-1]
+    mask_01 = mask[:-1, 1: ]
+    edge_0 = np.zeros(mask.shape, dtype = 'bool')
+    edge_1 = np.zeros(mask.shape, dtype = 'bool')
+
+    edge_0[:-1, :-1] = np.logical_and(
+        mask_00,
+        ~mask_10
+    )
+    edge_1[1:, :-1] = np.logical_and(
+        ~mask_00,
+        mask_10 
+    )
+    horiz_mask = np.logical_or(edge_0, edge_1)
+    edge_0[:, :] = 0
+    edge_1[:, :] = 0
+    edge_0[:-1, :-1] = np.logical_and(
+        mask_00,
+        ~mask_01
+    )
+    edge_1[:-1, 1:] = np.logical_and(
+        ~mask_00,
+        mask_01 
+    )
+    vert_mask = np.logical_or(edge_0, edge_1)
+    return np.logical_or(horiz_mask, vert_mask)
+
+
 

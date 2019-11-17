@@ -15,6 +15,14 @@ import tifffile
 import seaborn as sns
 sns.set(style = 'ticks')
 
+def draw_mask_prompt(
+    image_array,
+    n_masks,
+    white_out_image = None,
+    user_prompt = None,
+):
+    fig, ax = plt.subplots(figsize = (10, 10))
+    ax.imshow()
 
 
 def single_mask_trajectories(
@@ -459,4 +467,3 @@ def sort_points_into_polygon(points, tolerance_radius = 5.0):
 
     return points[result, :]
 
-    

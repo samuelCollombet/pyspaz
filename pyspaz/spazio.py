@@ -196,7 +196,7 @@ def trajs_to_locs(trajs, traj_cols, units = 'um'):
         units       :   str, for column naming
 
     returns
-        pandas.DataFrame
+        pandas.DataFrame of shape (n_locs, len(traj_cols) + 2)
 
     '''
     if len(traj_cols) != len(trajs[0]):
@@ -204,19 +204,21 @@ def trajs_to_locs(trajs, traj_cols, units = 'um'):
             'labels does not match number of trajectory attributes')
     n_trajs = trajs.shape[0]
     n_locs = sum([trajs[traj_idx][0].shape[0] for traj_idx in range(n_trajs)])
-    out = np.zeros((n_locs, len(traj_cols)+1), dtype = 'float64')
+    out = np.zeros((n_locs, len(traj_cols)+2), dtype = 'float64')
     c_idx = 0
     for traj_idx in range(n_trajs):
         for l_idx in range(trajs[traj_idx][0].shape[0]):
             out[c_idx,:2] = trajs[traj_idx][0][l_idx,:]
+            out[c_idx, 2] = traj_idx 
             for col in range(1, len(traj_cols)):
-                out[c_idx, col+1] = trajs[traj_idx][col][l_idx]
+                out[c_idx, col+2] = trajs[traj_idx][col][l_idx]
             c_idx += 1
     if units == 'um':
-        column_names = ['y_um', 'x_um'] + list(traj_cols)[1:]
+        column_names = ['y_um', 'x_um', 'traj_idx'] + list(traj_cols)[1:]
     else:
-        column_names = ['y_pixels', 'x_pixels'] + list(traj_cols)[1:]
+        column_names = ['y_pixels', 'x_pixels', 'traj_idx'] + list(traj_cols)[1:]
     df = pd.DataFrame(out, columns = column_names)
+    df['traj_idx'] = df['traj_idx'].astype('int64')
     return df
 
 
@@ -305,6 +307,25 @@ class ImageFileReader(object):
             return self.file_reader.get_frame_2D(t = frame_idx)
         elif self.type == 'tif':
             return self.file_reader.pages[frame_idx].asarray()
+
+    def min_max(self):
+        '''
+        returns
+            (int, int), the minimum and maximum
+                pixel intensities in the stack
+
+        '''
+        N, M, n_frames = self.get_shape()
+        c_max, c_min = 0, 0
+        for frame_idx in range(n_frames):
+            frame = self.get_frame(frame_idx)
+            frame_min = frame.min()
+            frame_max = frame.max()
+            if frame_min < c_min:
+                c_min = frame_min
+            if frame_max > c_max:
+                c_max = frame_max
+        return c_min, c_max 
 
     def close(self):
         self.file_reader.close()

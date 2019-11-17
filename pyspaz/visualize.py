@@ -9,6 +9,9 @@ import numpy as np
 # Reading / writing trajectories
 from scipy import io as sio 
 
+# For hard-writing a 24-bit RGB in overlay_trajs
+import tifffile
+
 # Dataframes
 import pandas as pd 
 
@@ -19,8 +22,16 @@ from . import spazio
 
 # Plotting
 import matplotlib.pyplot as plt 
+from matplotlib import cm
 import seaborn as sns
 sns.set(style = 'ticks')
+
+# Progress bar
+from tqdm import tqdm 
+
+# Interactive functions for Jupyter notebooks
+import ipywidgets as widgets
+from ipywidgets import interact, interactive, fixed, interact_manual
 
 def wrapup(out_png, dpi = 400, open_result = True):
     ''' Save a plot to PNG '''
@@ -224,6 +235,206 @@ def loc_density_from_file(
         verbose = verbose,
         out_png = out_png,
     )
+
+def overlay_locs_interactive(
+    locs,
+    nd2_file,
+    vmax_mod = 0.5,
+    dpi = 20,
+    continuous_update = False,
+):
+    # Load the ND2 file
+    reader = spazio.ImageFileReader(nd2_file)
+    N, M, n_frames = reader.get_shape()
+
+    # Figure out the intensity scaling
+    stack_min, stack_max = reader.min_max()
+    vmin = stack_min
+    vmax = stack_max * vmax_mod
+
+    # Define the update function
+    def update(frame_idx):
+        fig, ax = plt.subplots(figsize = (8, 8))
+        ax.imshow(
+            reader.get_frame(frame_idx),
+            cmap = 'gray',
+            vmin = vmin,
+            vmax = vmax,
+        )
+        ax.plot(
+            locs.loc[locs['frame_idx'] == frame_idx]['x_pixels'] - 0.5,
+            locs.loc[locs['frame_idx'] == frame_idx]['y_pixels'] - 0.5,
+            marker = '.',
+            markersize = 15,
+            color = 'r',
+            linestyle = '',
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        plt.show(); plt.close()
+
+    interact(update, frame_idx = widgets.IntSlider(
+        min=0, max=n_frames, continuous_update=continuous_update))
+
+def overlay_trajs(
+    nd2_file,
+    tracked_mat_file,
+    start_frame,
+    stop_frame,
+    out_tif = None,
+    vmax_mod = 1.0,
+    upsampling_factor = 1,
+    crosshair_len = 2,
+    pixel_size_um = 0.16,
+):
+    n_frames_plot = stop_frame - start_frame + 1
+
+    # Load trajectories and metadata
+    trajs, metadata, traj_cols = spazio.load_trajs(tracked_mat_file)
+
+    # Load image data
+    reader = spazio.ImageFileReader(nd2_file)
+    N, M, n_frames = reader.get_shape()
+
+    # The output is upsampled to show localizations at higher-than-
+    # pixel resolution
+    N_up = N * upsampling_factor
+    M_up = M * upsampling_factor
+
+    # Get image min and max
+    image_min, image_max = reader.min_max()
+    vmin = image_min 
+    vmax = image_max * vmax_mod 
+
+    # Break apart the trajectories into individual localizations,
+    # keeping track of the trajectory they came from
+    locs = spazio.trajs_to_locs(trajs, traj_cols)
+    n_locs = len(locs)
+    required_columns = ['frame_idx', 'traj_idx', 'y_um', 'x_um']
+    if any([c not in locs.columns for c in required_columns]):
+        raise RuntimeError('overlay_trajs: dataframe must contain frame_idx, traj_idx, y_um, x_um')
+
+    # Convert to ndarray
+    locs = np.asarray(locs[required_columns])
+
+    # Convert from um to pixels
+    locs[:, 2:] = locs[:, 2:] * upsampling_factor / metadata['pixel_size_um']
+    locs = locs.astype('int64') 
+
+
+    # Add a unique random index for each trajectory
+    new_locs = np.zeros((locs.shape[0], 5), dtype = 'int64')
+    new_locs[:,:4] = locs 
+    new_locs[:,4] = (locs[:,1] * 173) % 256
+    locs = new_locs 
+
+    # Do the plotting
+    colors = generate_rainbow_palette()
+
+    result = np.zeros((n_frames_plot, N_up, M_up * 2, 4), dtype = 'uint8')
+    frame_exp = np.zeros((N_up, M_up), dtype = 'uint8')
+    for frame_idx in tqdm(range(n_frames_plot)):
+        frame = reader.get_frame(frame_idx + start_frame).astype('float64')
+        frame_rescaled = ((frame / vmax) * 255)
+        frame_rescaled[frame_rescaled > 255] = 255 
+        frame_8bit = frame_rescaled.astype('uint8')
+
+        for i in range(upsampling_factor):
+            for j in range(upsampling_factor):
+                frame_exp[i::upsampling_factor, j::upsampling_factor] = frame_8bit
+
+        result[frame_idx, :, :M_up, 3] = frame_exp.copy()
+        result[frame_idx, :, M_up:, 3] = frame_exp.copy()
+
+        for j in range(3):
+            result[frame_idx, :, :M_up, j] = frame_exp.copy()
+            result[frame_idx, :, M_up + 1:, j] = frame_exp.copy()
+
+        locs_in_frame = locs[(locs[:,0] == frame_idx + start_frame).astype('bool'), :]
+
+        for loc_idx in range(locs_in_frame.shape[0]):
+            try:
+                result[frame_idx, locs_in_frame[loc_idx, 2], M_up + locs_in_frame[loc_idx, 3], :] = \
+                    colors[locs_in_frame[loc_idx, 4], :]
+            except (KeyError, ValueError, IndexError) as e2: #edge loc
+                pass
+            for j in range(1, crosshair_len + 1):
+                try:
+                    result[frame_idx, locs_in_frame[loc_idx, 2], M_up + locs_in_frame[loc_idx, 3] + j, :] = \
+                        colors[locs_in_frame[loc_idx, 4], :]
+                    result[frame_idx, locs_in_frame[loc_idx, 2], M_up + locs_in_frame[loc_idx, 3] - j, :] = \
+                        colors[locs_in_frame[loc_idx, 4], :]
+                    result[frame_idx, locs_in_frame[loc_idx, 2] + j, M_up + locs_in_frame[loc_idx, 3], :] = \
+                        colors[locs_in_frame[loc_idx, 4], :]
+                    result[frame_idx, locs_in_frame[loc_idx, 2] - j, M_up + locs_in_frame[loc_idx, 3], :] = \
+                        colors[locs_in_frame[loc_idx, 4], :]
+                except (KeyError, ValueError, IndexError) as e3:  #edge loc 
+                    continue 
+
+    if out_tif == None:
+        out_tif = 'default_overlay_trajs.tif'
+
+    tifffile.imsave(out_tif, result)
+    reader.close()
+
+def overlay_trajs_interactive(
+    nd2_file,
+    tracked_mat_file,
+    start_frame,
+    stop_frame,
+    vmax_mod = 1.0,
+    upsampling_factor = 1,
+    crosshair_len = 'dynamic',
+    continuous_update = True
+):
+    out_tif = '%soverlay.tif' % tracked_mat_file.replace('Tracked.mat', '')
+    if crosshair_len == 'dynamic':
+        crosshair_len = int(3 * upsampling_factor)
+    overlay_trajs(
+        nd2_file,
+        tracked_mat_file,
+        start_frame,
+        stop_frame,
+        out_tif = out_tif,
+        vmax_mod = vmax_mod,
+        upsampling_factor = upsampling_factor,
+        crosshair_len = crosshair_len,
+    )
+
+    reader = tifffile.TiffFile(out_tif)
+    n_frames = len(reader.pages)
+    def update(frame_idx):
+        fig, ax = plt.subplots(figsize = (14, 7))
+        page = reader.pages[frame_idx].asarray()
+        page[:,:,-1] = 255
+        ax.imshow(
+            page,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        plt.show(); plt.close()
+
+    interact(update, frame_idx = widgets.IntSlider(
+        min=0, max=n_frames, continuous_update=continuous_update))
+    
+
+def generate_rainbow_palette(n_colors = 256):
+    '''
+    Generate a rainbow color palette in RGBA format.
+    '''
+    result = np.zeros((n_colors, 4), dtype = 'uint8')
+    for color_idx in range(n_colors):
+        result[color_idx, :] = (np.asarray(cm.gist_rainbow(color_idx)) * \
+            255).astype('uint8')
+    return result 
+
+
+
+
+
+
+
+
 
 
 

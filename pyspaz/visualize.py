@@ -489,7 +489,181 @@ def generate_rainbow_palette(n_colors = 256):
 
 
 
+class ImageFileReader(object):
+    '''
+    Interface for grabbing frames from TIF or ND2 files.
+    
+    input_file: str, the name of a single TIF or ND2 file
+    
+    '''
+    def __init__(
+        self,
+        input_file,
+    ):
+        self.input_file = input_file
+        if '.nd2' in input_file:
+            self.type = 'nd2'
+            self.file_reader = ND2Reader(input_file)
+            self.is_closed = False
+        elif ('.tif' in input_file) or ('.tiff' in input_file):
+            self.type = 'tif'
+            self.file_reader = tifffile.TiffFile(input_file)
+            self.is_closed = False 
+        else:
+            print('Image format %s not recognized' % \
+                 os.path.splitext(input_file)[1])
+            self.type = None
+            self.is_closed = True 
+    
+    def get_shape(self):
+        '''
+        returns
+            (int, int, int), the y dimension, x dimension, and
+            t dimension of the data
+        
+        '''
+        if self.is_closed:
+            raise RuntimeError("Object is closed")
+        
+        if self.type == 'nd2':
+            y_dim = self.file_reader.metadata['height']
+            x_dim = self.file_reader.metadata['width']
+            t_dim = self.file_reader.metadata['total_images_per_channel']
+        elif self.type == 'tif':
+            y_dim, x_dim = self.file_reader.pages[0].shape 
+            t_dim = len(self.file_reader.pages)
+        
+        return (y_dim, x_dim, t_dim)
+    
+    def get_frame(self, frame_idx):
+        '''
+        args
+            frame_idx: int
+        
+        returns
+            2D np.array, the corresponding frame
+        
+        '''
+        if self.is_closed:
+            raise RuntimeError("Object is closed")
+        
+        if self.type == 'nd2':
+            return self.file_reader.get_frame_2D(t = frame_idx)
+        elif self.type == 'tif':
+            return self.file_reader.pages[frame_idx].asarray()
+    
+    def close(self):
+        self.file_reader.close()
+        self.is_closed = True 
 
+
+
+from scipy import stats as stats
+from nd2reader import ND2Reader
+def localisation_qc(
+    input_nd2_file,
+    input_localisation_file,
+    output_prefix,
+    iqr_threshold=3
+):
+    '''
+    Create different QC plots for localisation: loc per frame, photon count per loc, photon count vs background .
+    '''
+    # Make the file reader object
+    reader = ImageFileReader(input_nd2_file)
+    # Get the frame size and the number of frames
+    N, M, n_frames = reader.get_shape()
+
+    locs, metadata = spazio.load_locs(input_localisation_file)
+    columns = ['frame_idx', 'y_pixels', 'x_pixels', 'I0', 'bg', 'llr_detection']
+    
+    ### bound extreme values 
+    I0_lowerBound=max(0, np.median(locs['I0'])-stats.iqr(locs['I0'])/2 -iqr_threshold*stats.iqr(locs['I0']))
+    I0_upperBound=np.median(locs['I0'])+stats.iqr(locs['I0'])/2 +iqr_threshold*stats.iqr(locs['I0'])
+    locs['I0'] = np.where(np.array(locs['I0'].values.tolist()) > I0_upperBound, I0_upperBound, np.array(locs['I0'].values.tolist()))
+    locs['I0'] = np.where(np.array(locs['I0'].values.tolist()) < I0_lowerBound, I0_lowerBound, np.array(locs['I0'].values.tolist()))
+    
+    bg_lowerBound=np.median(locs['bg'])-stats.iqr(locs['bg'])/2 -iqr_threshold*stats.iqr(locs['bg'])
+    bg_upperBound=np.median(locs['bg'])+stats.iqr(locs['bg'])/2 +iqr_threshold*stats.iqr(locs['bg'])
+    locs['bg'] = np.where(np.array(locs['bg'].values.tolist()) > bg_upperBound, bg_upperBound, np.array(locs['bg'].values.tolist()))
+    locs['bg'] = np.where(np.array(locs['bg'].values.tolist()) < bg_lowerBound, bg_lowerBound, np.array(locs['bg'].values.tolist()))
+
+    
+    frame_counts = pd.DataFrame(locs['frame_idx'].value_counts())
+    frame_counts['frame'] = frame_counts.index.values
+    
+    np.mean(frame_counts['frame_idx'])
+
+    print('----- distribution of localisation per frame')
+    fig, ax = plt.subplots( nrows=1, ncols=1 )
+    plt.hist(frame_counts['frame_idx'].values.tolist(), bins=range(11), rwidth=0.5, align='left')
+    plt.xlabel('number of localisation per frame')
+    plt.ylabel('number of frame')
+    plt.savefig(output_prefix + "_locPerFrame_distrib.pdf", bbox_inches='tight')
+    plt.close(fig)
+
+    print('----- distribution of photon count per localisation')
+    fig, ax = plt.subplots( nrows=1, ncols=1 )
+    plt.hist(locs['I0'].values.tolist(), rwidth=0.5, align='left')
+    plt.xlabel('photon count')
+    plt.ylabel('number of localisation')
+    plt.savefig(output_prefix + "_photonCount_distrib.pdf")
+    plt.close(fig)
+
+    print('----- distribution of photon count vs background')
+    f = sns.jointplot(data=locs, x='I0', y='bg', kind="hex", space=0)
+    plt.xlabel('photon count')
+    plt.ylabel('background')
+    f.savefig(output_prefix + "_photonCount_vs_background.pdf")
+
+    print('----- barplot Count of of localtion per frame')
+    f = plt.figure(figsize=(20, 4))
+    plt.bar(frame_counts['frame'].values.tolist(), frame_counts['frame_idx'].values.tolist(), width=1)
+    plt.xlim(0, n_frames)
+    plt.xlabel('frame index')
+    plt.ylabel('number of localizations')
+    f.savefig(output_prefix + "_locPerFrame_counts.pdf", bbox_inches='tight')
+    plt.close(f)
+
+
+
+def tracking_qc(
+    input_tracking_file,
+    output_prefix
+):
+    '''
+    Create different QC plots for tracking .
+    '''
+
+    # Load trajectories
+    trajs = sio.loadmat(input_tracking_file)['trackedPar']
+    if trajs.shape[0] == 1:
+        trajs = trajs[0,:]
+    trajLen = [len(x[1][0]) for x in trajs ]
+
+    ### threeshold at max length = 20 frames
+    print(max(trajLen))
+    bg_upperBound=20
+    trajLen = np.where(np.array(trajLen) > bg_upperBound, bg_upperBound, np.array(trajLen))
+
+    ## distribution of traj length
+    fig, ax = plt.subplots( nrows=1, ncols=1 )
+    plt.hist(trajLen, bins=range(22), rwidth=0.5, align='left')
+    plt.xlabel('trajectory length')
+    plt.ylabel('number of trajectory')
+    plt.savefig(output_prefix + "_trackingFrameLength_distrib.pdf")
+    plt.close(fig)
+
+    
+    ## distribution of traj length >1
+    trajLen_supOne = trajLen[trajLen>1]
+    fig, ax = plt.subplots( nrows=1, ncols=1 )
+    plt.hist(trajLen_supOne, bins=range(2,22), rwidth=0.5, align='left')
+    plt.xticks([2,4,6,8,10,12,14,16,18,20])
+    plt.xlabel('trajectory length (excluding length=1). Total = ' + str(len(trajLen)))
+    plt.ylabel('number of trajectory')
+    plt.savefig(output_prefix + "_trackingFrameLength_sup1_distrib.pdf")
+    plt.close(fig)
 
 
 

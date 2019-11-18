@@ -64,7 +64,30 @@ def detect_and_localize_file(
     )
 
 
+@localize.command()
+@click.option('-i', '--input_nd2_file', type = str, required=True, help = 'Input file in .nd2 format (nikon).')
+@click.option('-l', '--input_localisation_file', type = str, required=True, help = 'Input localisation file (.csv).')
+@click.option('-o', '--output_prefix', type = str, default = None, help = ' default None')
+@click.option('-t', '--iqr_threshold', type = int, default = 3, help = 'photon count and background will be bound to t * IQR of their distribution. default 3')
+def localisation_qc(
+    input_nd2_file, 
+    **kwargs
+):
+    '''
+    Create different plots for localisation quality controls.     
+    '''
+    from pyspaz.visualize import localisation_qc
+    localisation_qc(
+        input_nd2_file,
+        **kwargs
+    )
 
+
+
+
+
+####################################################################################
+##### Tracking commands
 @main.group(cls=NaturalOrderGroup)
 def track():
     '''
@@ -135,26 +158,45 @@ def overlay_trajectories_on_spt(
     **kwargs
     )
 
+
+
 @track.command()
-@click.option('-t', '--input_tracking_file', type = str, required=True, help = 'Input file of tracking in .mat format.')
-@click.option('-o', '--out_png', type = str, help = 'output tif file.')
-@click.option('-c', '--cmap', type = str, default='viridis', help = 'Default viridis.')
-@click.option('--cap', type = int, default=3000, help = 'default 3000')
-@click.option('--n_colors', type = int, default=100, help = 'default 3000')
-@click.option('--color_index', type = int, default=None, help = 'default None')
-@click.option('-v','--verbose', default = True, help = 'default True')
-def plot_tracked_mat(
-    input_tracking_file,
+@click.option('-i', '--input_tracking_file', type = str, required=True, help = 'Input tracking file (.mat).')
+@click.option('-o', '--output_prefix', type = str, default = None, help = ' default None')
+def tracking_qc(
     **kwargs
 ):
     '''
-    xxx.
+    Create different plots for tracking quality controls.     
     '''
-    from pyspaz.visualize import plot_tracked_mat
-    plot_tracked_mat(
-    input_tracking_file,
-    **kwargs
+    from pyspaz.visualize import tracking_qc
+    tracking_qc(
+        **kwargs
     )
+
+
+#@track.command()
+#@click.option('-t', '--input_tracking_file', type = str, required=True, help = 'Input file of tracking in .mat format.')
+#@click.option('-o', '--out_png', type = str, help = 'output tif file.')
+#@click.option('-c', '--cmap', type = str, default='viridis', help = 'Default viridis.')
+#@click.option('--cap', type = int, default=3000, help = 'default 3000')
+#@click.option('--n_colors', type = int, default=100, help = 'default 3000')
+#@click.option('--color_index', type = int, default=None, help = 'default None')
+#@click.option('-v','--verbose', default = True, help = 'default True')
+#def plot_tracked_mat(
+    #input_tracking_file,
+    #**kwargs
+#):
+    #'''
+    #xxx.
+    #'''
+    #from pyspaz.visualize import plot_tracked_mat
+    #plot_tracked_mat(
+    #input_tracking_file,
+    #**kwargs
+    #)
+
+
 
 
 if __name__ == '__main__':

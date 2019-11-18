@@ -286,6 +286,7 @@ def overlay_trajs(
     upsampling_factor = 1,
     crosshair_len = 2,
     pixel_size_um = 0.16,
+    plot_type='localisation',
 ):
     n_frames_plot = stop_frame - start_frame + 1
 
@@ -328,10 +329,13 @@ def overlay_trajs(
     new_locs[:,4] = (locs[:,1] * 173) % 256
     locs = new_locs 
 
+    # select only locs in the range of frame to plot 
+    locs_in_range = locs[(locs[:,0] >= start_frame).astype('bool') & (locs[:,0] <= stop_frame).astype('bool'), :]
+
     # Do the plotting
     colors = generate_rainbow_palette()
 
-    result = np.zeros((n_frames_plot, N_up, M_up * 2, 4), dtype = 'uint8')
+    result = np.zeros((n_frames_plot, N_up, 1+ M_up * 2, 4), dtype = 'uint8')
     frame_exp = np.zeros((N_up, M_up), dtype = 'uint8')
     for frame_idx in tqdm(range(n_frames_plot)):
         frame = reader.get_frame(frame_idx + start_frame).astype('float64')
@@ -344,32 +348,86 @@ def overlay_trajs(
                 frame_exp[i::upsampling_factor, j::upsampling_factor] = frame_8bit
 
         result[frame_idx, :, :M_up, 3] = frame_exp.copy()
-        result[frame_idx, :, M_up:, 3] = frame_exp.copy()
+        result[frame_idx, :, 1+M_up:, 3] = frame_exp.copy()
+        result[frame_idx, :, M_up, 3] = 255
 
         for j in range(3):
             result[frame_idx, :, :M_up, j] = frame_exp.copy()
-            result[frame_idx, :, M_up + 1:, j] = frame_exp.copy()
+            result[frame_idx, :, 1+ M_up :, j] = frame_exp.copy()
+            result[frame_idx, :, M_up, j] = 255
 
-        locs_in_frame = locs[(locs[:,0] == frame_idx + start_frame).astype('bool'), :]
+        if plot_type == 'localisation':                 
+            locs_in_frame = locs_in_range[(locs_in_range[:,0] == frame_idx + start_frame).astype('bool'), :]
 
-        for loc_idx in range(locs_in_frame.shape[0]):
-            try:
-                result[frame_idx, locs_in_frame[loc_idx, 2], M_up + locs_in_frame[loc_idx, 3], :] = \
-                    colors[locs_in_frame[loc_idx, 4], :]
-            except (KeyError, ValueError, IndexError) as e2: #edge loc
-                pass
-            for j in range(1, crosshair_len + 1):
+            for loc_idx in range(locs_in_frame.shape[0]):
                 try:
-                    result[frame_idx, locs_in_frame[loc_idx, 2], M_up + locs_in_frame[loc_idx, 3] + j, :] = \
+                    result[frame_idx, locs_in_frame[loc_idx, 2], 1+ M_up + locs_in_frame[loc_idx, 3], :] = \
                         colors[locs_in_frame[loc_idx, 4], :]
-                    result[frame_idx, locs_in_frame[loc_idx, 2], M_up + locs_in_frame[loc_idx, 3] - j, :] = \
-                        colors[locs_in_frame[loc_idx, 4], :]
-                    result[frame_idx, locs_in_frame[loc_idx, 2] + j, M_up + locs_in_frame[loc_idx, 3], :] = \
-                        colors[locs_in_frame[loc_idx, 4], :]
-                    result[frame_idx, locs_in_frame[loc_idx, 2] - j, M_up + locs_in_frame[loc_idx, 3], :] = \
-                        colors[locs_in_frame[loc_idx, 4], :]
-                except (KeyError, ValueError, IndexError) as e3:  #edge loc 
-                    continue 
+                except (KeyError, ValueError, IndexError) as e2: #edge loc
+                    pass
+                for j in range(1, crosshair_len + 1):
+                    try:
+                        result[frame_idx, locs_in_frame[loc_idx, 2], 1+ M_up + locs_in_frame[loc_idx, 3] + j, :] = \
+                            colors[locs_in_frame[loc_idx, 4], :]
+                        result[frame_idx, locs_in_frame[loc_idx, 2], 1+ M_up + locs_in_frame[loc_idx, 3] - j, :] = \
+                            colors[locs_in_frame[loc_idx, 4], :]
+                        result[frame_idx, locs_in_frame[loc_idx, 2] + j, 1+ M_up + locs_in_frame[loc_idx, 3], :] = \
+                            colors[locs_in_frame[loc_idx, 4], :]
+                        result[frame_idx, locs_in_frame[loc_idx, 2] - j, 1+ M_up + locs_in_frame[loc_idx, 3], :] = \
+                            colors[locs_in_frame[loc_idx, 4], :]
+                    except (KeyError, ValueError, IndexError) as e3:  #edge loc 
+                        continue 
+
+
+        if plot_type == 'currentTracks':  
+            locs_in_frame = locs_in_range[(locs_in_range[:,0] == frame_idx + start_frame).astype('bool'), :]
+            locs_in_tracks_in_frame = locs_in_range[[i in locs_in_frame[:,1] for i in locs_in_range[:,1]],]
+            locs_in_tracks_in_frame_notBefore = locs_in_tracks_in_frame[locs_in_tracks_in_frame[:,0] <= (frame_idx + start_frame),]
+            
+            for loc_idx in range(locs_in_tracks_in_frame_notBefore.shape[0]):
+                try:
+                    result[frame_idx, locs_in_tracks_in_frame_notBefore[loc_idx, 2], 1+ M_up + locs_in_tracks_in_frame_notBefore[loc_idx, 3], :] = \
+                        colors[locs_in_tracks_in_frame_notBefore[loc_idx, 4], :]
+                except (KeyError, ValueError, IndexError) as e2: #edge loc
+                    pass
+                for j in range(1, crosshair_len + 1):
+                    try:
+                        result[frame_idx, locs_in_tracks_in_frame_notBefore[loc_idx, 2], 1+ M_up + locs_in_tracks_in_frame_notBefore[loc_idx, 3] + j, :] = \
+                            colors[locs_in_tracks_in_frame_notBefore[loc_idx, 4], :]
+                        result[frame_idx, locs_in_tracks_in_frame_notBefore[loc_idx, 2], 1+ M_up + locs_in_tracks_in_frame_notBefore[loc_idx, 3] - j, :] = \
+                            colors[locs_in_tracks_in_frame_notBefore[loc_idx, 4], :]
+                        result[frame_idx, locs_in_tracks_in_frame_notBefore[loc_idx, 2] + j, 1+ M_up + locs_in_tracks_in_frame_notBefore[loc_idx, 3], :] = \
+                            colors[locs_in_tracks_in_frame_notBefore[loc_idx, 4], :]
+                        result[frame_idx, locs_in_tracks_in_frame_notBefore[loc_idx, 2] - j, 1+ M_up + locs_in_tracks_in_frame_notBefore[loc_idx, 3], :] = \
+                            colors[locs_in_tracks_in_frame_notBefore[loc_idx, 4], :]
+                    except (KeyError, ValueError, IndexError) as e3:  #edge loc 
+                        continue 
+        
+
+
+        if plot_type == 'allTracks':  
+            locs_in_frame_or_before = locs_in_range[(locs_in_range[:,0] <= frame_idx + start_frame).astype('bool'), :]
+            
+            for loc_idx in range(locs_in_frame_or_before.shape[0]):
+                try:
+                    result[frame_idx, locs_in_frame_or_before[loc_idx, 2], 1+ M_up + locs_in_frame_or_before[loc_idx, 3], :] = \
+                        colors[locs_in_frame_or_before[loc_idx, 4], :]
+                except (KeyError, ValueError, IndexError) as e2: #edge loc
+                    pass
+                for j in range(1, crosshair_len + 1):
+                    try:
+                        result[frame_idx, locs_in_frame_or_before[loc_idx, 2], 1+ M_up + locs_in_frame_or_before[loc_idx, 3] + j, :] = \
+                            colors[locs_in_frame_or_before[loc_idx, 4], :]
+                        result[frame_idx, locs_in_frame_or_before[loc_idx, 2], 1+ M_up + locs_in_frame_or_before[loc_idx, 3] - j, :] = \
+                            colors[locs_in_frame_or_before[loc_idx, 4], :]
+                        result[frame_idx, locs_in_frame_or_before[loc_idx, 2] + j, 1+ M_up + locs_in_frame_or_before[loc_idx, 3], :] = \
+                            colors[locs_in_frame_or_before[loc_idx, 4], :]
+                        result[frame_idx, locs_in_frame_or_before[loc_idx, 2] - j, 1+ M_up + locs_in_frame_or_before[loc_idx, 3], :] = \
+                            colors[locs_in_frame_or_before[loc_idx, 4], :]
+                    except (KeyError, ValueError, IndexError) as e3:  #edge loc 
+                        continue  
+        
+
 
     if out_tif == None:
         out_tif = 'default_overlay_trajs.tif'

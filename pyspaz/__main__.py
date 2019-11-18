@@ -1,7 +1,24 @@
 
 import click
 
-@click.group()
+### order subcommand in help by their order in the code, not alphabetically 
+class NaturalOrderGroup(click.Group):
+    # def __init__(self, name=None, commands=None, **attrs):
+    #     if commands is None:
+    #         commands = OrderedDict()
+    #     elif not isinstance(commands, OrderedDict):
+    #         commands = OrderedDict(commands)
+    #     click.Group.__init__(self, name=name,
+    #                          commands=commands,
+    #                          **attrs)
+
+    def list_commands(self, ctx):
+        return self.commands.keys()
+
+
+
+
+@click.group(cls=NaturalOrderGroup)
 def main():
     '''
     pyspaz is a module for analyzing live cell single molecule tracking data. The package includes localization, tracking, visualization, and analysis utilities.
@@ -9,16 +26,15 @@ def main():
     '''
 
 
-@main.group()
+@main.group(cls=NaturalOrderGroup)
 def localize():
     '''
-    Detection and localization of 2D Gaussian spots in an image
-    with Poisson noise.
+    Detection and localization of 2D Gaussian spots in an image with Poisson noise.
     '''
     pass
 
 @localize.command()
-@click.option('-i', '--input_file', type = str, help = 'Input file in .nd2 format (nikon) or TIF.')
+@click.option('-i', '--input_file', type = str, required=True, help = 'Input file in .nd2 format (nikon) or TIF.')
 @click.option('-ot', '--out_txt', type = str, default = None, help = ' default None')
 @click.option('-od', '--out_dir', type = str, default = None, help = 'default None')
 @click.option('-s', '--sigma', type = float, default = 1, help = 'the expected standard deviation of the Gaussian spot. default 1')
@@ -39,58 +55,7 @@ def detect_and_localize_file(
     **kwargs
 ):
     '''
-    Detect and localize Gaussian spots in every frame of a single
-    molecule tracking movie in either ND2 or TIF format.
-    
-    args
-        input_file: str, a single ND2 or TIF file
-        
-        sigma: float, the expected standard deviation of the Gaussian spot
-
-        out_txt: str, the name of a file to save the localizations, if desired
-
-        out_dir: str, location to put output files. If None, these are placed
-            in the same directory as the ND2 files
-        
-        window_size: int, the width of the window to use for spot detection
-            and localization
-        
-        detect_threshold: float, the threshold in the log-likelihood image to 
-            use when calling a spot
-        
-        damp: float, the factor by which to damp the update vector at each iteration
-        
-        camera_bg: float, the background level on the camera
-        
-        camera_gain: float, the grayvalues/photon conversion for the camera
-        
-        max_iter: int, the maximum number of iterations to execute before escaping
-        
-        plot: bool, show each step of the result for illustration
-        
-        initial_guess: str, the method to use for the initial guess. The currently
-            implemented options are `radial_symmetry`, `centroid`, and `window_center`
-        
-        convergence: float, the criterion on the update vector for y and x when
-            the algorithm can stop iterating
-            
-        divergence_crit: float, the criterion on the update vector for y and x
-            when the algorithm should abandon MLE and default to a simpler method
-            
-        max_locs: int, the size of the localizations array to instantiate. This should
-            be much greater than the number of expected localizations in the movie
-
-        enforce_negative_definite : bool, whether to force the Hessian to be 
-            negative definite by iteratively testing for negative definiteness
-            by LU factorization, then subtracting successively larger ridge terms.
-            If False, the method will only add ridge terms if numpy throws a
-            linalg.linAlgError when trying to the invert the Hessian.
-
-        verbose : bool, show the user the current progress 
-
-    returns
-        pandas.DataFrame with the localization results for this movie.
-     
+    Detect and localize Gaussian spots in every frame of a single molecule tracking movie in either ND2 or TIF format.     
     '''
     from pyspaz.localize import detect_and_localize_file
     detect_and_localize_file(
@@ -100,12 +65,96 @@ def detect_and_localize_file(
 
 
 
-@main.group()
+@main.group(cls=NaturalOrderGroup)
 def track():
     '''
-    Track
+    Tracking of single molecules from localisations.
     '''
     pass
+
+@track.command()
+@click.option('-i', '--input_loc_file', type = str, required=True, help = 'Input file of localisation in .csv format (output of pyspaz localize detect-and-localize-file).')
+@click.option('-o', '--out_mat_file', type = str, default = None, help = 'Output .mat file.  default None')
+@click.option('-dm', '--d_max', type = float, default = 20, help = 'default 20')
+@click.option('-db', '--d_bound_naive', type = float, default = 0.1, help = 'default 0.1')
+@click.option('-e', '--search_exp_fac', type = float, default = 3, help = 'default 3')
+@click.option('-sep', '--sep', type = str, default = "\t", help = 'default \t')
+@click.option('-p', '--pixel_size_um', type = float, default = 0.16, help = 'default 0.16')
+@click.option('-f', '--frame_interval_sec', type = float, default = 0.00548, help = 'default 0.00548')
+@click.option('-m', '--min_int', type = float, default = 0.0, help = 'default 0.0')
+@click.option('-b', '--max_blinks', type = int, default = 0, help = 'default 0')
+@click.option('-w', '--window_size', type = int, default = 9, help = 'default 9')
+@click.option('-k', '--k_return_from_blink', type = int, default = 1, help = 'default 1')
+@click.option('-yi', '--y_int', type = float, default = 0.5, help = 'default 0.5')
+@click.option('-yd', '--y_diff', type = float, default = 0.9, help = 'default 0.9')
+@click.option('--start_frame', type = int, default = None, help = 'default None')
+@click.option('--stop_frame', type = int, default = None, help = 'default None')
+@click.option('-v','--verbose', default = True, help = 'default True')
+def track_locs(
+    input_loc_file,
+    **kwargs
+):
+    '''
+    Track single molecules through frames from a localisation .csv file (from pyspaz localize detect-and-localize-file).
+    '''
+    from pyspaz.track import track_locs
+    track_locs(
+        input_loc_file,
+        **kwargs
+    )
+
+
+
+@track.command()
+@click.option('-i', '--input_spt_file', type = str, required=True, help = 'Input file of SPT in nd2 format.')
+@click.option('-t', '--input_tracking_file', type = str, required=True, help = 'Input file of tracking in .mat format.')
+@click.option('-s', '--start_frame', type = int, default=1000, help = 'default 1000')
+@click.option('-e', '--end_frame', type = int, default=2000, help = 'default 2000')
+@click.option('-o', '--out_tif', type = str, help = 'output tif file.')
+@click.option('-v', '--vmax_mod', type = float, default = 1.0, help = 'default 1.0')
+@click.option('-u', '--upsampling_factor', type = int, default = 1, help = 'default 1')
+@click.option('-c', '--crosshair_len', type = int, default = 2, help = 'default 2')
+@click.option('-p', '--pixel_size_um', type = int, default = 0.16, help = 'default 0.16')
+@click.option('-p', '--plot_type', type=click.Choice(['localisation', 'currentTracks', 'allTracks']), default = 'localisation', help = 'default localisation')
+def overlay_trajectories_on_spt(
+    input_spt_file,
+    input_tracking_file,
+    start_frame,
+    end_frame,
+    **kwargs
+):
+    '''
+    Create a movie Tif file with the original SPT data and its overlay with the localisation, colored by trajectory.
+    '''
+    from pyspaz.visualize import overlay_trajs
+    overlay_trajs(
+    input_spt_file,
+    input_tracking_file,
+    start_frame,
+    end_frame,
+    **kwargs
+    )
+
+@track.command()
+@click.option('-t', '--input_tracking_file', type = str, required=True, help = 'Input file of tracking in .mat format.')
+@click.option('-o', '--out_png', type = str, help = 'output tif file.')
+@click.option('-c', '--cmap', type = str, default='viridis', help = 'Default viridis.')
+@click.option('--cap', type = int, default=3000, help = 'default 3000')
+@click.option('--n_colors', type = int, default=100, help = 'default 3000')
+@click.option('--color_index', type = int, default=None, help = 'default None')
+@click.option('-v','--verbose', default = True, help = 'default True')
+def plot_tracked_mat(
+    input_tracking_file,
+    **kwargs
+):
+    '''
+    xxx.
+    '''
+    from pyspaz.visualize import plot_tracked_mat
+    plot_tracked_mat(
+    input_tracking_file,
+    **kwargs
+    )
 
 
 if __name__ == '__main__':
